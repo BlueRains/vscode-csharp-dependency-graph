@@ -9,6 +9,7 @@ export interface GraphOptions {
   includePackageDependencies?: boolean;
   packageNodeColor?: string;
   includeClassDependencies?: boolean;
+  includeAllClassDependencies?: boolean;
 }
 
 /**

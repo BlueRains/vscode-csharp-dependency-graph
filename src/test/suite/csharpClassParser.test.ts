@@ -100,6 +100,37 @@ namespace TestProject
         assert.ok(derivedClass, 'DerivedClass should be found');
         assert.ok(derivedClass.dependencies.some(d => d.className === 'BaseClass'), 'Should have dependency on BaseClass');
     });
+        test('should parse class with inline constructor', async () => {
+        const baseClassContent = `
+namespace TestProject.Base
+{
+    public class BaseClass
+    {
+        public virtual void BaseMethod() { }
+    }
+}`;
+
+        const derivedClassContent = `
+using TestProject.Base;
+
+namespace TestProject
+{
+    public class DerivedClass(BaseClass item)
+    {
+    }
+}`;
+
+        setupProjectFiles('TestProject', [
+            { name: 'BaseClass.cs', content: baseClassContent },
+            { name: 'DerivedClass.cs', content: derivedClassContent }
+        ]);
+
+        const result = await parseClassDependencies(mockProjectFiles);
+
+        const derivedClass = result.find(c => c.className === 'DerivedClass');
+        assert.ok(derivedClass, 'DerivedClass should be found');
+        assert.ok(derivedClass.dependencies.some(d => d.className === 'OtherClass'), 'Should have dependency on the OtherClass');
+    });
 
     test('should parse class with field and property dependencies', async () => {
         const content = `
@@ -164,6 +195,36 @@ namespace TestProject
         setupProjectFiles('TestProject', [{ name: 'DataProcessor.cs', content }]);
 
         const result = await parseClassDependencies(mockProjectFiles);
+
+        const dataProcessor = result.find(c => c.className === 'DataProcessor');
+        assert.ok(dataProcessor, 'DataProcessor should be found');
+        
+        const loggerDependency = dataProcessor.dependencies.find(d => d.className === 'Logger');
+        assert.ok(loggerDependency, 'Should have dependency on Logger class');
+    });
+    test('should parse class with a constructor', async () => {
+        const content = `
+using System;
+
+namespace TestProject
+{
+    public class Logger
+    {
+        public void Log(string message) { }
+    }
+
+    public class DataProcessor
+    {
+        public DataProcessor(Logger logger, DateTime timestamp)
+        {
+            logger.Log($"Processing data at {timestamp}");
+        }
+    }
+}`;
+
+        setupProjectFiles('TestProject', [{ name: 'DataProcessor.cs', content }]);
+
+        const result = await parseClassDependencies(mockProjectFiles,false);
 
         const dataProcessor = result.find(c => c.className === 'DataProcessor');
         assert.ok(dataProcessor, 'DataProcessor should be found');

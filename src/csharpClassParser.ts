@@ -17,6 +17,63 @@ export interface DependencyInfo {
   projectName: string;
 }
 
+export const BRACKETS = Object.freeze({
+  ANGLE: 1,
+  ROUND: 2,
+  BOX: 4,
+  CURLY: 8,
+  STRING: 16,
+  CHAR: 32,
+  ALL: 63
+})
+
+function bracketsToIncludes(current:number[], brackets:number, char:string):boolean {
+  let i = 0
+  if (brackets & BRACKETS.ANGLE && char == '<') current[i]++;
+  if (brackets & BRACKETS.ANGLE && char == '>') current[i]--;
+  i++;
+  if (brackets & BRACKETS.ROUND && char == '(') current[i]++;
+  if (brackets & BRACKETS.ROUND && char == ')') current[i]--;
+  i++;
+  if (brackets & BRACKETS.BOX && char == '[') current[i]++;
+  if (brackets & BRACKETS.BOX && char == ']') current[i]--;
+  i++;
+  if (brackets & BRACKETS.CURLY && char == '{') current[i]++;
+  if (brackets & BRACKETS.CURLY && char == '}') current[i]--;
+  i++;
+  if (brackets & BRACKETS.STRING && char == '"') current[i] = Math.abs(current[i]-1);
+  i++;
+  if (brackets & BRACKETS.CHAR && char == `'`) current[i] = Math.abs(current[i]-1);
+  return current.reduce((a,b) => a+b) == 0
+}
+/**
+ * If both code and a comment is in the same line, remove the comment
+ * @param line The line to strip
+ * @returns 
+ */
+function stripRightComment(line:string):string {
+  if (line.indexOf("//") == -1) return line;
+  let index = 0
+  while (index > -1 && index < line.length - 1) {
+    let index = findNext(line, "/", BRACKETS.STRING | BRACKETS.CHAR)
+    if (index != -1 && line[index + 1] == "/") return line.substring(0, index)
+  }
+  // The comment we found was inside a string of some sort
+  return line
+}
+/**
+ * Ensure all method calls and other such things are on a single line, so that parsing line by line doesn't fuck things up.
+ * @param str The content to parse
+ */
+function preParseText(str:string):string {
+  //First split in lines. Remove all that are only a comment
+  // Then remove the parts that are partially comments
+  let noComments = str.split("\n").filter((line) => !line.trim().startsWith("//"))
+  noComments.forEach((line, i, arr) => arr[i] = stripRightComment(line))
+  let content = noComments.join("").replaceAll(/\/\*.*\*\//,""); // Remove all multiline comments 
+  return content.replaceAll(";", ";\n").replaceAll("{", "{\n")
+}
+
 /**
  * Analyzes C# source files to extract classes and their dependencies
  * @param projectSourceFiles Map of projects and their source files
@@ -24,13 +81,14 @@ export interface DependencyInfo {
  */
 export async function parseClassDependencies(
   projectSourceFiles: Map<string, string[]>,
+  complete = true,
   includeClassDependencies = true
 ): Promise<ClassDependency[]> {
   // Return empty array if class dependencies should not be included
   if (!includeClassDependencies) {
     return [];
   }
-  
+  console.log("Complete classes:", complete);
   const classDependencies: ClassDependency[] = [];
   
   // First pass: collect all class names with their namespaces for cross-reference resolution
@@ -53,7 +111,7 @@ export async function parseClassDependencies(
     for (const filePath of sourceFiles) {
       try {
         const content = await readFile(filePath, 'utf8');
-        const fileClasses = extractClassesFromFile(content, filePath, projectName, classRegistry);
+        const fileClasses = extractClassesFromFile(content, filePath, projectName, classRegistry, complete);
         classDependencies.push(...fileClasses);
       } catch (error) {
         console.error(`Error analyzing file ${filePath}:`, error);
@@ -100,25 +158,27 @@ function extractClassesFromFile(
   content: string, 
   filePath: string, 
   projectName: string,
-  classRegistry: Map<string, { namespace: string, projectName: string }>
+  classRegistry: Map<string, { namespace: string, projectName: string }>,
+  complete:boolean
 ): ClassDependency[] {
   const classes: ClassDependency[] = [];
-  
+  const cleanedContent = preParseText(content);
+
   // Find the namespace
   const namespaceRegex = /namespace\s+([\w.]+)/;
-  const namespaceMatch = namespaceRegex.exec(content);
+  const namespaceMatch = namespaceRegex.exec(cleanedContent);
   const namespace = namespaceMatch ? namespaceMatch[1] : '';
   
   // Extract using directives for namespace resolution
-  const imports = extractImports(content);
+  const imports = extractImports(cleanedContent);
   
   // Find classes - Limit the class name length to avoid excessive backtracking
-  const classLines = content.split('\n').filter(line => 
+  const classLines = cleanedContent.split('\n').filter(line => 
     /\bclass\s+\w{1,60}/.test(line)
   );
-  
+  //This is only the lines with class declaration in it. And then the entire body is extracted
   for (const line of classLines) {
-    const classDep = processClassLine(line, content, projectName, namespace, filePath, imports, classRegistry);
+    const classDep = processSingleClass(line, cleanedContent, projectName, namespace, filePath, imports, classRegistry, complete);
     if (classDep) {
       classes.push(classDep);
     }
@@ -130,14 +190,15 @@ function extractClassesFromFile(
 /**
  * Process a single class line to extract dependency information
  */
-function processClassLine(
+function processSingleClass(
   line: string,
   content: string,
   projectName: string,
   namespace: string,
   filePath: string,
   imports: string[],
-  classRegistry: Map<string, { namespace: string, projectName: string }>
+  classRegistry: Map<string, { namespace: string, projectName: string }>,
+  complete=true
 ): ClassDependency | null {
   // Extract the class name - Limit the class name length
   const classNameRegex = /\bclass\s+(\w{1,60})/;
@@ -149,17 +210,19 @@ function processClassLine(
   
   // Extract inheritance dependencies
   extractInheritanceDependencies(line, dependencies);
-  
+  //Extract inline constructor
+  extractConstructorDependencies(line, dependencies);
   // Find the index of the beginning of the class
   const classIndex = content.indexOf(line);
   if (classIndex < 0) {return null;}
   
+
   // Extract the class body
   const classContent = getClassBody(content, classIndex);
   if (!classContent) {return null;}
   
   // Extract dependencies from class content
-  extractDependenciesFromClassContent(classContent, dependencies);
+  extractDependenciesFromClassContent(className, classContent, dependencies, complete);
   
   // Resolve and filter dependencies
   const resolvedDeps = resolveDependencies(dependencies, imports, namespace, className, classRegistry);
@@ -350,6 +413,44 @@ function extractInheritanceDependencies(line: string, dependencies: DependencyIn
     }
   }
 }
+/**
+ * Extract constructor dependencies from a class declaration line
+ */
+function extractConstructorDependencies(content: string, dependencies: DependencyInfo[]): void {
+  // Use simple character class to prevent ReDoS
+  const braceIndex = content.indexOf('{');
+  const startBracketIndex = content.indexOf('(');
+  if (braceIndex <= startBracketIndex) return; // If it looks like class x {func() } we ignore
+  
+  const endBracketIndex = findNext(content, ")", BRACKETS.ALL, startBracketIndex)
+  if (endBracketIndex === -1) {
+    // Something went wrong with parsing
+    return;
+  }
+  // Both start and end brackets found. 
+  
+  // Handle commas in generic arguments properly
+  
+  const parts = splitByTopLevelCommas(content.substring(startBracketIndex+1, endBracketIndex));
+  
+  for (const part of parts) {
+    let [cls, _] = part.split(" ", 2);;
+    if (cls !== 'object' && cls !== 'System.Object') {
+      const baseClassName = part.split('<')[0].trim();
+      dependencies.push({ className: baseClassName, namespace: 'unknown', projectName: 'external' });
+    }
+  }
+}
+
+function findNext(str:string, search:string, ignore:number, startIndex:number=0): number {
+  let depths = [0,0,0,0,0,0];
+  
+  for (let index = startIndex; index < str.length; index++) {
+    const char = str[index];
+    if (bracketsToIncludes(depths, ignore, char) && str.startsWith(search, index)) return index;
+  }
+  return -1;
+}
 
 /**
  * Split a string by commas, but ignore commas within angle brackets (for generics)
@@ -385,17 +486,20 @@ function splitByTopLevelCommas(str: string): string[] {
  * Extract dependencies from class content
  */
 function extractDependenciesFromClassContent(
+  className:string,
   classContent: string, 
-  dependencies: DependencyInfo[]
+  dependencies: DependencyInfo[],
+  complete:boolean =true
 ): void {
+  if (complete) {
   // 1. Find instantiations with 'new'
   findNewInstantiations(classContent, dependencies);
   
   // 2. Find static method calls
   findStaticCalls(classContent, dependencies);
-  
+  }
   // 3. Find variable types, parameter types, and method return types
-  findAllTypes(classContent, dependencies);
+  findAllTypes(className, classContent, dependencies, complete);
 }
 
 /**
@@ -444,17 +548,22 @@ function findStaticCalls(content: string, dependencies: DependencyInfo[]) {
 
 /**
  * Finds all types in variable declarations, parameters, and method returns
+ * If not complete, only use constructors
  */
-function findAllTypes(content: string, dependencies: DependencyInfo[]): void {
+function findAllTypes(className:string, content: string, dependencies: DependencyInfo[], complete:boolean): void {
   // Split into lines to simplify analysis
   const lines = content.split('\n');
-  
+  //TODO: Constructors
+  //TODO: Multi line method signatures
   for (const line of lines) {
     // Skip comments
     if (line.trim().startsWith('//')) {continue;}
     
-    processVariableDeclaration(line, dependencies);
-    processMethodSignature(line, dependencies);
+    if (complete) { 
+      processVariableDeclaration(line, dependencies);
+      processMethodSignature(line, dependencies);
+    }
+    processConstructSignature(className, line, dependencies);
   }
 }
 
@@ -482,7 +591,23 @@ function processVariableDeclaration(line: string, dependencies: DependencyInfo[]
     });
   }
 }
+/**
+ * Process constructors to extract parameters
+ */
+function processConstructSignature(className:string, line: string, dependencies: DependencyInfo[]): void {
+  // Use fixed repetition to prevent ReDoS
+  const methodRegex = /\b(?:public|private|protected|internal)\s+(\w+)\s*\(([^)]*)\)/;
+  
+  const methodMatch = methodRegex.exec(line);
+  
+  if (!methodMatch) {
+    return;
+  }
+  // Only class constructors
+  if (methodMatch[1] != className ) return;
+  processParameters(methodMatch[2], dependencies);
 
+}
 /**
  * Process method signatures to extract return type and parameters
  */
@@ -495,9 +620,9 @@ function processMethodSignature(line: string, dependencies: DependencyInfo[]): v
   if (!methodMatch) {
     return;
   }
-  
   processReturnType(methodMatch[1], dependencies);
   processParameters(methodMatch[3], dependencies);
+
 }
 
 /**
@@ -574,31 +699,34 @@ function extractImports(content: string): string[] {
  * Gets the body of a class with a more robust method
  */
 function getClassBody(content: string, startIndex: number): string | null {
-  let openBraces = 0;
+  // let openBraces = 0;
   let startPos = -1;
   
+
   // First, find the opening brace
   for (let i = startIndex; i < content.length; i++) {
     if (content[i] === '{') {
       startPos = i;
-      openBraces = 1;
+      // openBraces = 1;
       break;
     }
   }
   
   if (startPos === -1) {return null;}
   
+  let i = findNext(content, "}", BRACKETS.CURLY, startPos)
+  return content.substring(startPos, i+1);
   // Then find the matching closing brace
-  for (let i = startPos + 1; i < content.length; i++) {
-    if (content[i] === '{') {
-      openBraces++;
-    } else if (content[i] === '}') {
-      openBraces--;
-      if (openBraces === 0) {
-        return content.substring(startPos, i + 1);
-      }
-    }
-  }
+  // for (let i = startPos + 1; i < content.length; i++) {
+  //   if (content[i] === '{') {
+  //     openBraces++;
+  //   } else if (content[i] === '}') {
+  //     openBraces--;
+  //     if (openBraces === 0) {
+  //       return content.substring(startPos, i + 1);
+  //     }
+  //   }
+  // }
   
   return null; // No balanced closing brace found
 }

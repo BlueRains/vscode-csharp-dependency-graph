@@ -80,7 +80,7 @@ export class GraphController {
       const baseFilename = generateClassGraph
         ? "class-dependency-graph"
         : "project-dependency-graph";
-
+      
       // Get file save location
       const saveUri = await this.getSaveLocation(
         workspaceFolder,
@@ -89,13 +89,18 @@ export class GraphController {
       if (!saveUri) {
         return; // User cancelled
       }
+      const completeVersion = await this.basicVersion();
+      if (!completeVersion) return;
+
+      const generateCompleteGraph = completeVersion.label === "Full";
 
       await this.generateAndSaveGraph(
         workspaceFolder,
         saveUri,
         selectedSolutionFile,
         generateClassGraph,
-        config
+        config,
+        generateCompleteGraph
       );
     } catch (error: unknown) {
       const errorMessage =
@@ -130,15 +135,21 @@ export class GraphController {
           if (!graphType) {
             return; // User cancelled
           }
-
           const generateClassGraph = graphType.label === "Class Dependencies";
+
+          const completeVersion = await this.basicVersion();
+          if (!completeVersion) return;
+            
+          
+          const generateCompleteGraph = completeVersion.label === "Full";
           
           progress.report({ message: "Generating graph data...", increment: 40 });
           const dotContent = await this.generateGraphContent(
             workspaceFolder,
             selectedSolutionFile,
             generateClassGraph,
-            config
+            config,
+            generateCompleteGraph
           );
 
           progress.report({ message: "Opening modern view...", increment: 80 });
@@ -475,7 +486,22 @@ export class GraphController {
       { placeHolder: "Select the type of dependency graph to generate" }
     );
   }
-
+  private async basicVersion() {
+    return vscode.window.showQuickPick(
+      [
+        {
+          label: "Constructors and inheritance only",
+          description: "Generate a basic graph with only constructors and inheritance dependency",
+        },
+        {
+          label: "Full",
+          description:
+            "Generate detailed graph with class-level dependencies, including all function parameters, new() declarations, etc.",
+        },
+      ],
+      { placeHolder: "Select what kind of graph to generate" }
+    );
+  }
   private async getSaveLocation(
     workspaceFolder: vscode.WorkspaceFolder,
     baseFilename: string
@@ -500,7 +526,8 @@ export class GraphController {
     saveUri: vscode.Uri,
     selectedSolutionFile: string | undefined,
     generateClassGraph: boolean,
-    config: DependencyGraphConfig
+    config: DependencyGraphConfig,
+    complete:boolean
   ): Promise<void> {
     const filePath = await vscode.window.withProgress(
       {
@@ -508,7 +535,7 @@ export class GraphController {
         title: "Generating dependency graph...",
         cancellable: false,
       },
-      async (progress) => {
+      async (progress: vscode.Progress<{ message?: string }>) => {
         // Find all .csproj files
         progress.report({ message: "Finding project files..." });
 
@@ -540,6 +567,7 @@ export class GraphController {
             csprojFiles,
             projects,
             config,
+            complete,
             progress
           );
           dotContent = classDotContent;
@@ -651,6 +679,7 @@ export class GraphController {
     csprojFiles: string[],
     projects: Project[],
     config: DependencyGraphConfig,
+    complete:boolean = true,
     progress: vscode.Progress<{ message?: string }>
   ): Promise<{ dotContent: string, cycleAnalysis: CycleAnalysisResult | null }> {
     try {
@@ -674,7 +703,8 @@ export class GraphController {
         message: `Analyzing class dependencies in ${totalSourceFiles} files...`,
       });
       const classDependencies = await parseClassDependencies(
-        projectSourceFiles
+        projectSourceFiles,
+        complete
       );
 
       if (classDependencies.length === 0) {
@@ -735,7 +765,8 @@ export class GraphController {
     workspaceFolder: vscode.WorkspaceFolder,
     selectedSolutionFile: string | undefined,
     generateClassGraph: boolean,
-    config: DependencyGraphConfig
+    config: DependencyGraphConfig,
+    complete:boolean
   ): Promise<string> {
     // Find all .csproj files
     const csprojFiles: string[] = await this.getCsprojFiles(
@@ -765,6 +796,7 @@ export class GraphController {
         csprojFiles,
         projects,
         config,
+        complete,
         { report: () => {} } // Simple progress stub for internal use
       );
       dotContent = classDotContent;

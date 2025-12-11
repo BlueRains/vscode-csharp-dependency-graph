@@ -29,22 +29,22 @@ export const BRACKETS = Object.freeze({
 
 function bracketsToIncludes(current:number[], brackets:number, char:string):boolean {
   let i = 0
-  if (brackets & BRACKETS.ANGLE && char == '<') current[i]++;
-  if (brackets & BRACKETS.ANGLE && char == '>') current[i]--;
+  if (brackets & BRACKETS.ANGLE && char === '<') {current[i]++;}
+  if (brackets & BRACKETS.ANGLE && char === '>') {current[i]--;}
   i++;
-  if (brackets & BRACKETS.ROUND && char == '(') current[i]++;
-  if (brackets & BRACKETS.ROUND && char == ')') current[i]--;
+  if (brackets & BRACKETS.ROUND && char === '(') {current[i]++;}
+  if (brackets & BRACKETS.ROUND && char === ')') {current[i]--;}
   i++;
-  if (brackets & BRACKETS.BOX && char == '[') current[i]++;
-  if (brackets & BRACKETS.BOX && char == ']') current[i]--;
+  if (brackets & BRACKETS.BOX && char === '[') {current[i]++;}
+  if (brackets & BRACKETS.BOX && char === ']') {current[i]--;}
   i++;
-  if (brackets & BRACKETS.CURLY && char == '{') current[i]++;
-  if (brackets & BRACKETS.CURLY && char == '}') current[i]--;
+  if (brackets & BRACKETS.CURLY && char === '{') {current[i]++;}
+  if (brackets & BRACKETS.CURLY && char === '}') {current[i]--;}
   i++;
-  if (brackets & BRACKETS.STRING && char == '"') current[i] = Math.abs(current[i]-1);
+  if (brackets & BRACKETS.STRING && char === '"') {current[i] = Math.abs(current[i]-1);}
   i++;
-  if (brackets & BRACKETS.CHAR && char == `'`) current[i] = Math.abs(current[i]-1);
-  return current.reduce((a,b) => a+b) == 0
+  if (brackets & BRACKETS.CHAR && char === `'`) {current[i] = Math.abs(current[i]-1);}
+  return current.reduce((a,b) => a+b) === 0
 }
 /**
  * If both code and a comment is in the same line, remove the comment
@@ -52,11 +52,11 @@ function bracketsToIncludes(current:number[], brackets:number, char:string):bool
  * @returns 
  */
 function stripRightComment(line:string):string {
-  if (line.indexOf("//") == -1) return line;
+  if (line.indexOf("//") === -1) {return line;}
   let index = 0
   while (index > -1 && index < line.length - 1) {
     let index = findNext(line, "/", BRACKETS.STRING | BRACKETS.CHAR)
-    if (index != -1 && line[index + 1] == "/") return line.substring(0, index)
+    if (index !== -1 && line[index + 1] === "/") {return line.substring(0, index)}
   }
   // The comment we found was inside a string of some sort
   return line
@@ -420,7 +420,7 @@ function extractConstructorDependencies(content: string, dependencies: Dependenc
   // Use simple character class to prevent ReDoS
   const braceIndex = content.indexOf('{');
   const startBracketIndex = content.indexOf('(');
-  if (braceIndex <= startBracketIndex) return; // If it looks like class x {func() } we ignore
+  if (braceIndex <= startBracketIndex) {return;} // If it looks like class x {func() } we ignore
   
   const endBracketIndex = findNext(content, ")", BRACKETS.ALL, startBracketIndex)
   if (endBracketIndex === -1) {
@@ -447,7 +447,7 @@ function findNext(str:string, search:string, ignore:number, startIndex:number=0)
   
   for (let index = startIndex; index < str.length; index++) {
     const char = str[index];
-    if (bracketsToIncludes(depths, ignore, char) && str.startsWith(search, index)) return index;
+    if (bracketsToIncludes(depths, ignore, char) && str.startsWith(search, index)) {return index;}
   }
   return -1;
 }
@@ -604,7 +604,7 @@ function processConstructSignature(className:string, line: string, dependencies:
     return;
   }
   // Only class constructors
-  if (methodMatch[1] != className ) return;
+  if (methodMatch[1] !== className ) {return;}
   processParameters(methodMatch[2], dependencies);
 
 }
@@ -728,7 +728,7 @@ function getClassBody(content: string, startIndex: number): string | null {
   //   }
   // }
   
-  return null; // No balanced closing brace found
+  // return null; // No balanced closing brace found
 }
 
 /**
